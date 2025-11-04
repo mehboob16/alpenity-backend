@@ -32,7 +32,7 @@ app.post("/api/article", (req, res) => {
   res.status(200).json({
     status: "success",
     message: "Article received and stored.",
-    article_url: "https://e8aa2ae13e21.ngrok-free.app",
+    article_url: "https://alpenity-frontend.vercel.app/",
   });
 });
 
