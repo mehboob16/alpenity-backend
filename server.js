@@ -84,31 +84,56 @@ app.get("/api/article", (req, res) => {
 
 /**
  * POST /api/logs
- * Accepts a log entry from workflow (success/failure). Expected body examples:
- * Success: { type: "success", post_link, caption, article_link, message }
- * Failure: { type: "failure", node, error }
- * Any additional fields are stored in `data` as-is.
+ * Accepts either a single log object or an array of log objects from workflow.
+ * New/expected incoming schema example (array allowed):
+ * [
+ *  {
+ *    "status": "success",
+ *    "workflow_id": "qK8cGeNk3cXA2qbH",
+ *    "workflow_name": "Meta Posting workflow",
+ *    "execution_id": "433",
+ *    "post_link": "https://www.facebook.com/...",
+ *    "article_url": null
+ *  }
+ * ]
  */
 app.post("/api/logs", (req, res) => {
-  const body = req.body || {};
-  const type = (body.type || "info").toString();
+  const body = req.body;
 
-  // Basic validation for demo purposes
-  if (!["success", "failure", "info"].includes(type)) {
-    return res
-      .status(400)
-      .json({ status: "error", message: "Invalid log type" });
+  if (!body) {
+    return res.status(400).json({ status: "error", message: "Empty body" });
   }
 
-  const data = { ...body };
-  delete data.type;
+  // Normalize to an array of items
+  const items = Array.isArray(body) ? body : [body];
 
-  const entry = addLog(type, data);
+  const created = [];
+
+  for (const item of items) {
+    // Map incoming "status" to internal "type"
+    const incomingStatus = (item.status || item.type || "info")
+      .toString()
+      .toLowerCase();
+    const type =
+      incomingStatus === "failure"
+        ? "failure"
+        : incomingStatus === "success"
+        ? "success"
+        : "info";
+
+    // Store the whole item as data but remove 'status' to avoid duplication
+    const data = { ...item };
+    delete data.status;
+    delete data.type; // if present
+
+    const entry = addLog(type, data);
+    created.push(entry);
+  }
 
   res.status(200).json({
     status: "ok",
-    message: "Log stored (in-memory).",
-    log: entry,
+    message: `Stored ${created.length} log(s) (in-memory).`,
+    logs: created,
   });
 });
 
