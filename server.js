@@ -16,6 +16,23 @@ app.use(express.json({ limit: "5mb" })); // Allow larger JSON payloads
 // It's not a real database, but it works for this minimal example.
 let latestArticle = null;
 
+// === In-memory logs (for admin pane, demo only) ===
+let logs = [];
+
+// Helper to add log entries (newest first)
+function addLog(type, data = {}) {
+  const log = {
+    id: Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+    type, // e.g., 'success', 'failure', 'article_received'
+    data,
+    timestamp: new Date().toISOString(),
+  };
+  logs.unshift(log);
+  // Optionally cap logs to avoid unbounded growth (demo): keep last 1000
+  if (logs.length > 1000) logs = logs.slice(0, 1000);
+  return log;
+}
+
 // === Routes ===
 
 /**
@@ -28,6 +45,17 @@ app.post("/api/article", (req, res) => {
 
   // Store the new article data
   latestArticle = req.body;
+
+  // Log that an article was received (demo admin)
+  addLog("article_received", {
+    message: "Article received and stored by backend",
+    articlePreview: {
+      // keep small / not storing huge payloads in list preview
+      title: req.body.title || null,
+      url: req.body.url || null,
+    },
+    raw: req.body,
+  });
 
   res.status(200).json({
     status: "success",
@@ -50,6 +78,56 @@ app.get("/api/article", (req, res) => {
       message: "No article has been posted by n8n yet.",
     });
   }
+});
+
+// --- Admin logging endpoints ---
+
+/**
+ * POST /api/logs
+ * Accepts a log entry from workflow (success/failure). Expected body examples:
+ * Success: { type: "success", post_link, caption, article_link, message }
+ * Failure: { type: "failure", node, error }
+ * Any additional fields are stored in `data` as-is.
+ */
+app.post("/api/logs", (req, res) => {
+  const body = req.body || {};
+  const type = (body.type || "info").toString();
+
+  // Basic validation for demo purposes
+  if (!["success", "failure", "info"].includes(type)) {
+    return res
+      .status(400)
+      .json({ status: "error", message: "Invalid log type" });
+  }
+
+  const data = { ...body };
+  delete data.type;
+
+  const entry = addLog(type, data);
+
+  res.status(200).json({
+    status: "ok",
+    message: "Log stored (in-memory).",
+    log: entry,
+  });
+});
+
+/**
+ * GET /api/logs
+ * Returns logs (newest first). Optional ?limit=20
+ */
+app.get("/api/logs", (req, res) => {
+  const limit = parseInt(req.query.limit || "100", 10) || 100;
+  res.status(200).json(logs.slice(0, limit));
+});
+
+/**
+ * POST /api/logs/clear
+ * Clears all logs (demo only).
+ */
+app.post("/api/logs/clear", (req, res) => {
+  logs = [];
+  res.status(200).json({ status: "ok", message: "Logs cleared (demo)." });
 });
 
 // === Start the Server ===
