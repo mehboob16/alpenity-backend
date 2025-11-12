@@ -46,17 +46,6 @@ app.post("/api/article", (req, res) => {
   // Store the new article data
   latestArticle = req.body;
 
-  // Log that an article was received (demo admin)
-  addLog("article_received", {
-    message: "Article received and stored by backend",
-    articlePreview: {
-      // keep small / not storing huge payloads in list preview
-      title: req.body.title || null,
-      url: req.body.url || null,
-    },
-    raw: req.body,
-  });
-
   res.status(200).json({
     status: "success",
     message: "Article received and stored.",
