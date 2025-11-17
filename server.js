@@ -156,6 +156,23 @@ app.post("/api/logs", (req, res) => {
       type = "waiting";
     }
 
+    // NEW: If this is a success log with draft_workflow_execution_id, remove the corresponding waiting log
+    if (type === "success" && item.draft_workflow_execution_id) {
+      const draftExecutionId = item.draft_workflow_execution_id;
+      // Find and remove the waiting log with matching execution_id
+      const indexToRemove = logs.findIndex(
+        (log) =>
+          log.type === "waiting" && log.data.execution_id === draftExecutionId
+      );
+
+      if (indexToRemove !== -1) {
+        logs.splice(indexToRemove, 1);
+        console.log(
+          `Removed waiting log with execution_id: ${draftExecutionId}`
+        );
+      }
+    }
+
     // Store the whole item as data but remove 'status' to avoid duplication
     const data = { ...item };
     delete data.status;
