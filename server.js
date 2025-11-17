@@ -156,19 +156,24 @@ app.post("/api/logs", (req, res) => {
       type = "waiting";
     }
 
-    // NEW: If this is a success log with draft_workflow_execution_id, remove the corresponding waiting log
+    // UPDATED: If this is a success log with draft_workflow_execution_id, remove the corresponding waiting log
+    // Now also match by platform to handle multi-platform posts
     if (type === "success" && item.draft_workflow_execution_id) {
       const draftExecutionId = item.draft_workflow_execution_id;
-      // Find and remove the waiting log with matching execution_id
+      const platform = item.platform; // Get platform from success log
+
+      // Find and remove the waiting log with matching execution_id AND platform
       const indexToRemove = logs.findIndex(
         (log) =>
-          log.type === "waiting" && log.data.execution_id === draftExecutionId
+          log.type === "waiting" &&
+          log.data.execution_id === draftExecutionId &&
+          log.data.platform === platform
       );
 
       if (indexToRemove !== -1) {
         logs.splice(indexToRemove, 1);
         console.log(
-          `Removed waiting log with execution_id: ${draftExecutionId}`
+          `Removed waiting log with execution_id: ${draftExecutionId} and platform: ${platform}`
         );
       }
     }
