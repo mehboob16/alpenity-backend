@@ -103,12 +103,18 @@ app.post("/api/logs", (req, res) => {
     const incomingStatus = (item.status || item.type || "info")
       .toString()
       .toLowerCase();
-    const type =
-      incomingStatus === "failure"
-        ? "failure"
-        : incomingStatus === "success"
-        ? "success"
-        : "info";
+
+    let type = "info";
+    if (incomingStatus === "failure") {
+      type = "failure";
+    } else if (incomingStatus === "success") {
+      type = "success";
+    } else if (
+      incomingStatus === "waiting for approval" ||
+      incomingStatus === "waiting"
+    ) {
+      type = "waiting";
+    }
 
     // Store the whole item as data but remove 'status' to avoid duplication
     const data = { ...item };
