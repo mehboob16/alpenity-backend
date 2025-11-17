@@ -33,6 +33,46 @@ function addLog(type, data = {}) {
   return log;
 }
 
+// ADD: Demo logs for testing (add after addLog function definition)
+// Create demo logs when server starts
+function initializeDemoLogs() {
+  // Demo log 1: Success
+  addLog("success", {
+    workflow_name: "Meta Posting workflow",
+    workflow_id: "qK8cGeNk3cXA2qbH",
+    execution_id: "433",
+    post_link:
+      "https://www.facebook.com/122102491071110135/posts/122102481771110135",
+    article_url: "https://example.com/article-1",
+  });
+
+  // Demo log 2: Waiting for approval
+  addLog("waiting", {
+    workflow_name: "Meta Posting workflow",
+    workflow_id: "qK8cGeNk3cXA2qbH",
+    execution_id: "520",
+    database_link:
+      "https://www.notion.so/2aee8b7ef13480cc9ad2ecf7355effea?v=2aee8b7ef1348070b618000c1988165a",
+    article_url: null,
+  });
+
+  // Demo log 3: Failure
+  addLog("failure", {
+    workflow_name: "Meta Posting workflow",
+    workflow_id: "qK8cGeNk3cXA2qbH",
+    execution_id: "454",
+    node: "HTTP Request",
+    error_message: "Bad request - please check your parameters",
+    error_description:
+      "(#100) Tried accessing nonexisting field (permalink_ur) on node type (PagePost)",
+    execution_link:
+      "https://n8n.cupidworld.com/workflow/qK8cGeNk3cXA2qbH/executions/454",
+  });
+}
+
+// Initialize demo logs
+initializeDemoLogs();
+
 // === Routes ===
 
 /**
