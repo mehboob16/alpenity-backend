@@ -1,5 +1,16 @@
 const express = require("express");
 const cors = require("cors");
+// try to require mongodb but don't crash if it's not installed
+let MongoClient, ObjectId;
+try {
+  ({ MongoClient, ObjectId } = require("mongodb"));
+} catch (err) {
+  console.warn(
+    "Warning: 'mongodb' package is not installed. DB persistence will be disabled."
+  );
+  // Keep MongoClient undefined so initMongo can detect and skip DB initialization
+}
+require("dotenv").config(); // <-- NEW: load .env
 
 const app = express();
 const PORT = 3001; // We'll run the backend on this port
@@ -11,67 +22,63 @@ app.use(cors());
 // 2. Enable built-in JSON parsing
 app.use(express.json({ limit: "5mb" })); // Allow larger JSON payloads
 
-// === "In-Memory Database" ===
-// This variable will hold the article data.
-// It's not a real database, but it works for this minimal example.
-let latestArticle = null;
+// === MongoDB setup ===
+// Set MONGODB_URI in your environment (never hardcode credentials)
+const MONGODB_URI = process.env.MONGODB_URI || "<YOUR_MONGODB_URI_HERE>";
+const DB_NAME = process.env.DB_NAME || "simpleui";
+let mongoClient;
+let logsCollection;
 
-// === In-memory logs (for admin pane, demo only) ===
-let logs = [];
+// NEW: status object to report connection state
+let dbStatus = { connected: false, message: "not initialized" };
 
-// Helper to add log entries (newest first)
-function addLog(type, data = {}) {
-  const log = {
-    id: Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),
-    type, // e.g., 'success', 'failure', 'article_received'
-    data,
-    timestamp: new Date().toISOString(),
-  };
-  logs.unshift(log);
-  // Optionally cap logs to avoid unbounded growth (demo): keep last 1000
-  if (logs.length > 1000) logs = logs.slice(0, 1000);
-  return log;
+async function initMongo() {
+  if (!MongoClient) {
+    console.warn(
+      "MongoClient unavailable: skipping MongoDB initialization. Install 'mongodb' to enable persistence."
+    );
+    dbStatus = { connected: false, message: "mongodb package not installed" };
+    return;
+  }
+  if (!MONGODB_URI || MONGODB_URI.includes("<YOUR_MONGODB_URI_HERE>")) {
+    console.warn("MONGODB_URI not set. Backend will not persist logs to DB.");
+    dbStatus = { connected: false, message: "MONGODB_URI not configured" };
+    return;
+  }
+  // mongoClient = new MongoClient(MONGODB_URI, {
+  //   useNewUrlParser: true,
+  //   useUnifiedTopology: true,
+  // });
+  mongoClient = new MongoClient(MONGODB_URI);
+
+  try {
+    await mongoClient.connect();
+    const db = mongoClient.db(DB_NAME);
+    logsCollection = db.collection("logs");
+    // create index for faster queries/sorting
+    await logsCollection.createIndex({ createdAt: -1 });
+    // ping DB to confirm
+    await db.command({ ping: 1 });
+    dbStatus = {
+      connected: true,
+      message: "Connected to MongoDB",
+      db: DB_NAME,
+      time: new Date().toISOString(),
+    };
+    console.log("Connected to MongoDB, logs collection ready.");
+  } catch (err) {
+    dbStatus = {
+      connected: false,
+      message: err.message || "Connection failed",
+    };
+    console.error("Failed to initialize MongoDB:", err);
+  }
 }
 
-// ADD: Demo logs for testing (add after addLog function definition)
-// Create demo logs when server starts
-function initializeDemoLogs() {
-  // Demo log 1: Success
-  addLog("success", {
-    workflow_name: "Meta Posting workflow",
-    workflow_id: "qK8cGeNk3cXA2qbH",
-    execution_id: "433",
-    post_link:
-      "https://www.facebook.com/122102491071110135/posts/122102481771110135",
-    article_url: "https://example.com/article-1",
-  });
-
-  // Demo log 2: Waiting for approval
-  addLog("waiting", {
-    workflow_name: "Meta Posting workflow",
-    workflow_id: "qK8cGeNk3cXA2qbH",
-    execution_id: "520",
-    database_link:
-      "https://www.notion.so/2aee8b7ef13480cc9ad2ecf7355effea?v=2aee8b7ef1348070b618000c1988165a",
-    article_url: null,
-  });
-
-  // Demo log 3: Failure
-  addLog("failure", {
-    workflow_name: "Meta Posting workflow",
-    workflow_id: "qK8cGeNk3cXA2qbH",
-    execution_id: "454",
-    node: "HTTP Request",
-    error_message: "Bad request - please check your parameters",
-    error_description:
-      "(#100) Tried accessing nonexisting field (permalink_ur) on node type (PagePost)",
-    execution_link:
-      "https://n8n.cupidworld.com/workflow/qK8cGeNk3cXA2qbH/executions/454",
-  });
-}
-
-// Initialize demo logs
-initializeDemoLogs();
+// Initialize Mongo (non-blocking)
+initMongo().catch((err) => {
+  console.error("Failed to initialize MongoDB:", err);
+});
 
 // === Routes ===
 
@@ -126,90 +133,149 @@ app.get("/api/article", (req, res) => {
  *  }
  * ]
  */
-app.post("/api/logs", (req, res) => {
+app.post("/api/logs", async (req, res) => {
   const body = req.body;
-
   if (!body) {
     return res.status(400).json({ status: "error", message: "Empty body" });
   }
-
-  // Normalize to an array of items
   const items = Array.isArray(body) ? body : [body];
-
   const created = [];
 
   for (const item of items) {
-    // Map incoming "status" to internal "type"
     const incomingStatus = (item.status || item.type || "info")
       .toString()
       .toLowerCase();
-
     let type = "info";
-    if (incomingStatus === "failure") {
-      type = "failure";
-    } else if (incomingStatus === "success") {
-      type = "success";
-    } else if (
+    if (incomingStatus === "failure") type = "failure";
+    else if (incomingStatus === "success") type = "success";
+    else if (
       incomingStatus === "waiting for approval" ||
       incomingStatus === "waiting"
-    ) {
+    )
       type = "waiting";
-    }
 
-    // UPDATED: If this is a success log with draft_workflow_execution_id, remove the corresponding waiting log
-    // Now also match by platform to handle multi-platform posts
+    // If success with draft_workflow_execution_id, remove the waiting draft by execution_id AND platform
     if (type === "success" && item.draft_workflow_execution_id) {
       const draftExecutionId = item.draft_workflow_execution_id;
-      const platform = item.platform; // Get platform from success log
-
-      // Find and remove the waiting log with matching execution_id AND platform
-      const indexToRemove = logs.findIndex(
-        (log) =>
-          log.type === "waiting" &&
-          log.data.execution_id === draftExecutionId &&
-          log.data.platform === platform
-      );
-
-      if (indexToRemove !== -1) {
-        logs.splice(indexToRemove, 1);
-        console.log(
-          `Removed waiting log with execution_id: ${draftExecutionId} and platform: ${platform}`
-        );
+      const platform = item.platform || null;
+      if (logsCollection) {
+        const query = {
+          type: "waiting",
+          "data.execution_id": draftExecutionId,
+        };
+        if (platform) query["data.platform"] = platform;
+        const deleted = await logsCollection.findOneAndDelete(query);
+        if (deleted.value) {
+          console.log(
+            `Removed waiting log for draft execution ${draftExecutionId} platform ${platform}`
+          );
+        }
       }
     }
 
-    // Store the whole item as data but remove 'status' to avoid duplication
+    // persist the incoming item (remove top-level status/type to avoid duplication)
     const data = { ...item };
     delete data.status;
-    delete data.type; // if present
+    delete data.type;
 
-    const entry = addLog(type, data);
-    created.push(entry);
+    try {
+      const entry = await addLog(type, data);
+      created.push(entry);
+    } catch (err) {
+      console.error("Error adding log to DB:", err);
+    }
   }
 
   res.status(200).json({
     status: "ok",
-    message: `Stored ${created.length} log(s) (in-memory).`,
+    message: `Stored ${created.length} log(s).`,
     logs: created,
   });
 });
 
 /**
  * GET /api/logs
- * Returns logs (newest first). Optional ?limit=20
+ * Query params: page (1-based), limit
+ * Returns { logs: [...], total, page, limit }
+ * Sorted newest-first (createdAt desc)
  */
-app.get("/api/logs", (req, res) => {
-  const limit = parseInt(req.query.limit || "100", 10) || 100;
-  res.status(200).json(logs.slice(0, limit));
+app.get("/api/logs", async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page || "1", 10));
+  const limit = Math.max(
+    1,
+    Math.min(100, parseInt(req.query.limit || "20", 10))
+  );
+  const skip = (page - 1) * limit;
+
+  try {
+    if (logsCollection) {
+      const total = await logsCollection.countDocuments();
+      const docs = await logsCollection
+        .find({})
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray();
+
+      // map to client shape
+      const logs = docs.map((d) => ({
+        id: d._id.toHexString(),
+        type: d.type,
+        data: d.data,
+        timestamp: d.createdAt.toISOString(),
+      }));
+
+      res.status(200).json({ logs, total, page, limit });
+    } else {
+      // fallback: empty dataset if DB not configured
+      res.status(200).json({ logs: [], total: 0, page, limit });
+    }
+  } catch (err) {
+    console.error("Error fetching logs:", err);
+    res.status(500).json({ status: "error", message: "Failed to fetch logs" });
+  }
 });
 
 /**
  * POST /api/logs/clear
- * Clears all logs (demo only).
+ * Clears all logs (demo only or admin)
  */
-app.post("/api/logs/clear", (req, res) => {
-  logs = [];
-  res.status(200).json({ status: "ok", message: "Logs cleared (demo)." });
+app.post("/api/logs/clear", async (req, res) => {
+  try {
+    if (logsCollection) {
+      await logsCollection.deleteMany({});
+    }
+    res.status(200).json({ status: "ok", message: "Logs cleared." });
+  } catch (err) {
+    console.error("Error clearing logs:", err);
+    res.status(500).json({ status: "error", message: "Failed to clear logs." });
+  }
+});
+
+/**
+ * GET /api/db-test
+ * Returns current DB connection status. Performs a lightweight ping if connected.
+ */
+app.get("/api/db-test", async (req, res) => {
+  try {
+    if (logsCollection && logsCollection.db) {
+      // perform a ping to validate connection
+      await logsCollection.db.command({ ping: 1 });
+      return res.status(200).json({
+        connected: true,
+        message: "MongoDB reachable",
+        db: DB_NAME,
+        time: new Date().toISOString(),
+      });
+    }
+    // If logsCollection is not ready, return the current status object
+    return res.status(200).json(dbStatus);
+  } catch (err) {
+    console.error("DB ping failed:", err);
+    return res
+      .status(500)
+      .json({ connected: false, message: err.message || "ping failed" });
+  }
 });
 
 // === Start the Server ===
