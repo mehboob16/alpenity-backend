@@ -32,6 +32,39 @@ let logsCollection;
 // NEW: status object to report connection state
 let dbStatus = { connected: false, message: "not initialized" };
 
+// === "In-Memory Database" ===
+// Keep latestArticle in-memory for article endpoint (unchanged)
+let latestArticle = null;
+
+// Helper to add log entries (now persists to MongoDB)
+async function addLog(type, data = {}) {
+  const doc = {
+    type,
+    data,
+    createdAt: new Date(), // store as Date for sorting
+  };
+  if (logsCollection) {
+    const res = await logsCollection.insertOne(doc);
+    const id = res.insertedId.toHexString();
+    return {
+      id,
+      type: doc.type,
+      data: doc.data,
+      timestamp: doc.createdAt.toISOString(),
+    };
+  } else {
+    // fallback to in-memory minimal behavior if DB not configured
+    const id =
+      Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+    return {
+      id,
+      type: doc.type,
+      data: doc.data,
+      timestamp: doc.createdAt.toISOString(),
+    };
+  }
+}
+
 async function initMongo() {
   if (!MongoClient) {
     console.warn(
@@ -54,7 +87,7 @@ async function initMongo() {
   try {
     await mongoClient.connect();
     const db = mongoClient.db(DB_NAME);
-    logsCollection = db.collection("logs");
+    logsCollection = db.collection("Logs");
     // create index for faster queries/sorting
     await logsCollection.createIndex({ createdAt: -1 });
     // ping DB to confirm
